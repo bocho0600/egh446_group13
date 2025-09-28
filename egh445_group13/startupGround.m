@@ -1,0 +1,324 @@
+%% Clean + open model
+close_system('sl_groundvehicleDynamics', 0);
+
+homedir = pwd;
+addpath(genpath(fullfile(homedir,'toolboxes')));
+
+cd(fullfile('toolboxes','MRTB'));
+startMobileRoboticsSimulationToolbox;
+cd(homedir);
+
+open_system('sl_groundvehicleDynamics');
+
+%% Run and save outputs
+simOut = sim('sl_groundvehicleDynamics','StopTime','500');   % adjust as needed
+save('simOut.mat','simOut');
+if exist('optimized_waypoints','var')
+    save('optimized_waypoints.mat','optimized_waypoints');
+end
+
+% Cross-track errors (timeseries in SimulationOutput)
+err1_t = simOut.error1.Time;  err1 = simOut.error1.Data;
+err2_t = simOut.error2.Time;  err2 = simOut.error2.Data;
+err3_t = simOut.error3.Time;  err3 = simOut.error3.Data;
+
+% Poses (for trajectory plot earlier)
+pose1 = [];
+pose2 = [];
+pose3 = [];
+if isfield(simOut,'pose1'), pose1 = simOut.pose1.Data; end
+if isfield(simOut,'pose2'), pose2 = simOut.pose2.Data; end
+if isfield(simOut,'pose3'), pose3 = simOut.pose3.Data; end
+if isempty(pose1) && isfield(simOut,'pose'), pose1 = simOut.pose.Data; end  % fallback
+
+% Waypoints
+if isfield(simOut,'virtual_waypoints')
+    virtual_waypoints = simOut.virtual_waypoints.Data;
+elseif exist('optimized_waypoints','var')
+    virtual_waypoints = optimized_waypoints;
+else
+    virtual_waypoints = [];
+end
+
+% Capture errors
+cap1 = simOut.capture_errors1.Data;  cap1 = cap1(~isnan(cap1));
+cap2 = simOut.capture_errors2.Data;  cap2 = cap2(~isnan(cap2));
+cap3 = simOut.capture_errors3.Data;  cap3 = cap3(~isnan(cap3));
+
+t0   = max([err1_t(1), err2_t(1), err3_t(1)]);
+tend = min([err1_t(end), err2_t(end), err3_t(end)]);
+
+dt1 = median(diff(err1_t));
+dt2 = median(diff(err2_t));
+dt3 = median(diff(err3_t));                 
+dt  = min([dt1, dt2, dt3]);                      
+t   = (t0:dt:tend).';
+
+err1_i = interp1(err1_t, err1, t, 'linear', 'extrap');
+err2_i = interp1(err2_t, err2, t, 'linear', 'extrap');
+err3_i = interp1(err3_t, err3, t, 'linear', 'extrap');
+
+%% default colours etc
+set(groot,'defaultFigureColor','w');                   
+set(groot,'defaultFigureInvertHardcopy','on');         
+set(groot,'defaultAxesColor','w');                     
+set(groot,'defaultAxesXColor','k','defaultAxesYColor','k','defaultAxesZColor','k');
+set(groot,'defaultAxesGridColor',[0.75 0.75 0.75]);    
+set(groot,'defaultAxesLineWidth',1.0);
+set(groot,'defaultAxesFontSize',12);
+set(groot,'defaultTextColor','k');
+set(groot,'defaultLegendTextColor','k');
+set(groot,'defaultAxesColorOrder',[0 0.6 0; 1 0 1; 0.2 0.2 0.2]);  
+
+exportFig = @(fname) exportgraphics(gcf, fname, ...
+    'BackgroundColor','white','Resolution',300,'ContentType','image');
+
+%% capture error
+c1 = cap1(:); c2 = cap2(:); c3 = cap3(:);
+k  = max([numel(c1), numel(c2), numel(c3)]);           % CHANGED (robust max)
+c1(end+1:k) = NaN;  c2(end+1:k) = NaN; c3(end+1:k) = NaN;
+
+figure('Name','Capture Error — Boxplot','Color','w'); box on; grid on;
+boxplot([c1 c2 c3], 'Labels', {'Filter - UKF','Filter - KF','None'});
+ylabel('Error [m]'); title('Distribution of Capture Errors');
+exportFig('capture_error_boxplot.png');
+
+%% trajectory
+if ~isempty(virtual_waypoints)
+    figure('Name','Trajectory vs Virtual Waypoints','Color','w'); box on; grid on;
+    plot(virtual_waypoints(:,1), virtual_waypoints(:,2), 'r-', 'LineWidth', 2.2); hold on;
+    if ~isempty(pose1), plot(pose1(:,1), pose1(:,2), 'g-', 'LineWidth', 1.5); end
+    if ~isempty(pose2), plot(pose2(:,1), pose2(:,2), 'm-', 'LineWidth', 1.5); end
+    axis equal; xlabel('X [m]'); ylabel('Y [m]');
+    title('Vehicle Trajectory vs Virtual Waypoints');
+    lg = {'Virtual Waypoints'}; 
+    if ~isempty(pose1), lg{end+1} = 'Filter - UKF Path'; end
+    if ~isempty(pose2), lg{end+1} = 'Filter - KF Path'; end
+    legend(lg{:},'Location','best','Color','w','EdgeColor',[0.3 0.3 0.3]);
+    exportFig('trajectory_vs_waypoints.png');
+end
+
+
+tmin = max([err1_t(1), err2_t(1), err3_t(1)]);
+tmax = min([err1_t(end), err2_t(end), err3_t(end)]);
+dtc  = max([median(diff(err1_t)), median(diff(err2_t)), median(diff(err3_t))]);
+tt   = (tmin:dtc:tmax).';
+
+e1 = interp1(err1_t, err1, tt, 'linear', NaN);
+e2 = interp1(err2_t, err2, tt, 'linear', NaN);
+e3 = interp1(err3_t, err3, tt, 'linear', NaN);
+
+% Remove time at start or end for transient if needed
+settle = 0.05;      % seconds to cut at start
+trim   = 0.0;      % seconds to cut at end
+
+mask = tt >= (tmin + settle) & tt <= (tmax - trim) & ...
+       isfinite(e1) & isfinite(e2) & isfinite(e3);
+
+t_plot  = tt(mask);
+e1_plot = e1(mask);
+e2_plot = e2(mask);
+e3_plot = e3(mask);
+
+RMSE1 = sqrt(mean(e1_plot.^2));
+RMSE2 = sqrt(mean(e2_plot.^2));
+RMSE3 = sqrt(mean(e3_plot.^2));
+
+figure('Name','Cross-track Error Comparison','Color','w'); box on; grid on;
+plot(t, err1_i, 'LineWidth', 1.8); hold on;
+plot(t, err2_i, 'LineWidth', 1.8);
+plot(t, err3_i, 'LineWidth', 1.8);
+ylim([-1 10]); xlim([t(1) t(end)]);
+xlabel('Time [s]'); ylabel('Cross-track Error [m]');
+title('Cross-track Error Comparison');
+legend('Vehicle 1 (Unscented Kalman)','Vehicle 2 (Standard Kalman)','Vehicle 3 (None)', ...
+       'Location','best','Color','w','EdgeColor',[0.3 0.3 0.3]);
+
+xPos = t(1) + 0.70*(t(end)-t(1));
+text(xPos, 4.0, sprintf('RMS Error 1 = %.2f m', RMSE1), 'Color','k','FontSize',12,'FontWeight','bold');
+text(xPos, 4.6, sprintf('RMS Error 2 = %.2f m', RMSE2), 'Color','k','FontSize',12,'FontWeight','bold');
+text(xPos, 5.2, sprintf('RMS Error 3 = %.2f m', RMSE3), 'Color','k','FontSize',12,'FontWeight','bold');
+exportFig('cross_track_error_timeseries.png');
+
+%% moving RMS
+win = max(1, round(5 / dt));
+mrms1 = sqrt(movmean(err1_i.^2, win));
+mrms2 = sqrt(movmean(err2_i.^2, win));
+mrms3 = sqrt(movmean(err3_i.^2, win));   % CHANGED
+
+figure('Name','Moving RMS (5 s window)','Color','w'); box on; grid on;
+plot(t, mrms1, 'LineWidth', 1.8); hold on;
+plot(t, mrms2, 'LineWidth', 1.8);
+plot(t, mrms3, 'LineWidth', 1.8);          % CHANGED
+xlabel('Time [s]'); ylabel('Moving RMS [m]');
+title('Local (windowed) RMS of Cross-track Error');
+legend('Vehicle 1 (UKF)','Vehicle 2 (KF)','Vehicle 3 (None)', ...
+       'Location','best','Color','w','EdgeColor',[0.3 0.3 0.3]);
+exportFig('cross_track_error_moving_rms.png');
+
+%% Error histogram
+abs1 = abs(err1_i); abs2 = abs(err2_i);
+clipLim = prctile([abs1; abs2], 99.0);
+
+edges = linspace(0, clipLim, 40);
+figure('Name','|Error| Histogram','Color','w'); box on; grid on;
+histogram(abs1, edges,'Normalization','pdf','EdgeColor','none'); hold on;
+histogram(abs2, edges,'Normalization','pdf','EdgeColor','none');
+xlabel('|Cross-track error| [m]'); ylabel('PDF');
+title('Histogram of |Cross-track Error| (clipped to 99th percentile)');
+legend('Vehicle 1 (UKF)','Vehicle 2 (KF)','Location','best','Color','w','EdgeColor',[0.3 0.3 0.3]);
+exportFig('cross_track_error_hist.png');
+
+[f1,x1] = ecdf(abs1); [f2,x2] = ecdf(abs2);
+figure('Name','|Error| CDF','Color','w'); box on; grid on;
+plot(x1,f1,'LineWidth',1.8); hold on;
+plot(x2,f2,'LineWidth',1.8);
+xlim([0 clipLim]); ylim([0 1]);
+xlabel('|Cross-track error| [m]'); ylabel('CDF');
+title('|Error| CDF (clipped to 99th percentile)');
+legend('Vehicle 1 (UKF)','Vehicle 2 (KF)','Location','southeast','Color','w','EdgeColor',[0.3 0.3 0.3]);
+exportFig('cross_track_error_cdf.png');
+
+%% raw filtered and clean
+pose1_ts       = simOut.pose1;       
+pose1_hat_ts   = simOut.pose1_hat;
+pose1_clean_ts = simOut.pose_clean1;
+pose2_ts       = simOut.pose2;
+pose2_hat_ts   = simOut.pose2_hat;
+pose2_clean_ts = simOut.pose_clean2;
+
+% Extract arrays
+t1  = pose1_ts.Time;     x1  = pose1_ts.Data(:,1);     y1  = pose1_ts.Data(:,2);
+t1h = pose1_hat_ts.Time; x1h = pose1_hat_ts.Data(:,1); y1h = pose1_hat_ts.Data(:,2);
+
+t2  = pose2_ts.Time;     x2  = pose2_ts.Data(:,1);     y2  = pose2_ts.Data(:,2);
+t2h = pose2_hat_ts.Time; x2h = pose2_hat_ts.Data(:,1); y2h = pose2_hat_ts.Data(:,2);
+
+if ~isempty(pose1_clean_ts)
+    t1c = pose1_clean_ts.Time;  x1c = pose1_clean_ts.Data(:,1);  y1c = pose1_clean_ts.Data(:,2);
+else
+    t1c = []; x1c = []; y1c = [];
+end
+if ~isempty(pose2_clean_ts)
+    t2c = pose2_clean_ts.Time;  x2c = pose2_clean_ts.Data(:,1);  y2c = pose2_clean_ts.Data(:,2);
+else
+    t2c = []; x2c = []; y2c = [];
+end
+
+% Vehicle 1
+if isempty(t1c)
+    tmin = max([t1(1) t1h(1)]); tmax = min([t1(end) t1h(end)]);
+    dtg  = max([median(diff(t1)) median(diff(t1h))]);
+    tg1  = (tmin:dtg:tmax).';
+    x1_raw = interp1(t1 ,x1 ,tg1,'linear',NaN);
+    x1_fil = interp1(t1h,x1h,tg1,'linear',NaN);
+    y1_raw = interp1(t1 ,y1 ,tg1,'linear',NaN);
+    y1_fil = interp1(t1h,y1h,tg1,'linear',NaN);
+    x1_cln = NaN(size(tg1)); y1_cln = NaN(size(tg1));
+    m1 = isfinite(x1_raw)&isfinite(x1_fil)&isfinite(y1_raw)&isfinite(y1_fil);
+else
+    tmin = max([t1(1) t1c(1) t1h(1)]); tmax = min([t1(end) t1c(end) t1h(end)]);
+    dtg  = max([median(diff(t1)) median(diff(t1c)) median(diff(t1h))]);
+    tg1  = (tmin:dtg:tmax).';
+    x1_raw = interp1(t1 ,x1 ,tg1,'linear',NaN);
+    x1_cln = interp1(t1c,x1c,tg1,'linear',NaN);
+    x1_fil = interp1(t1h,x1h,tg1,'linear',NaN);
+    y1_raw = interp1(t1 ,y1 ,tg1,'linear',NaN);
+    y1_cln = interp1(t1c,y1c,tg1,'linear',NaN);
+    y1_fil = interp1(t1h,y1h,tg1,'linear',NaN);
+    m1 = isfinite(x1_raw)&isfinite(x1_cln)&isfinite(x1_fil)&isfinite(y1_raw)&isfinite(y1_cln)&isfinite(y1_fil);
+end
+
+% Vehicle 2
+if isempty(t2c)
+    tmin = max([t2(1) t2h(1)]); tmax = min([t2(end) t2h(end)]);
+    dtg  = max([median(diff(t2)) median(diff(t2h))]);
+    tg2  = (tmin:dtg:tmax).';
+    x2_raw = interp1(t2 ,x2 ,tg2,'linear',NaN);
+    x2_fil = interp1(t2h,x2h,tg2,'linear',NaN);
+    y2_raw = interp1(t2 ,y2 ,tg2,'linear',NaN);
+    y2_fil = interp1(t2h,y2h,tg2,'linear',NaN);
+    x2_cln = NaN(size(tg2)); y2_cln = NaN(size(tg2));
+    m2 = isfinite(x2_raw)&isfinite(x2_fil)&isfinite(y2_raw)&isfinite(y2_fil);
+else
+    tmin = max([t2(1) t2c(1) t2h(1)]); tmax = min([t2(end) t2c(end) t2h(end)]);
+    dtg  = max([median(diff(t2)) median(diff(t2c)) median(diff(t2h))]);
+    tg2  = (tmin:dtg:tmax).';
+    x2_raw = interp1(t2 ,x2 ,tg2,'linear',NaN);
+    x2_cln = interp1(t2c,x2c,tg2,'linear',NaN);
+    x2_fil = interp1(t2h,x2h,tg2,'linear',NaN);
+    y2_raw = interp1(t2 ,y2 ,tg2,'linear',NaN);
+    y2_cln = interp1(t2c,y2c,tg2,'linear',NaN);
+    y2_fil = interp1(t2h,y2h,tg2,'linear',NaN);
+    m2 = isfinite(x2_raw)&isfinite(x2_cln)&isfinite(x2_fil)&isfinite(y2_raw)&isfinite(y2_cln)&isfinite(y2_fil);
+end
+
+rawCol   = [0.6 0.6 0.6];
+cleanCol = [0   0   0  ];
+filtCol  = [0   0.45 0.95];
+
+%% Vehicle 1 
+figure('Name','Vehicle 1 — raw/clean/filtered (x,y)'); tiledlayout(2,1,'Padding','compact');
+
+% X(t)
+nexttile; hold on; h=[]; labs={};
+m1r = isfinite(x1_raw) & isfinite(y1_raw);
+m1c = isfinite(x1_cln) & isfinite(y1_cln);
+m1f = isfinite(x1_fil) & isfinite(y1_fil);
+if any(m1r), h(end+1)=plot(tg1(m1r), x1_raw(m1r), 'Color', rawCol);          labs{end+1}='raw';      end
+if any(m1c), h(end+1)=plot(tg1(m1c), x1_cln(m1c), '--','Color', cleanCol,'LineWidth',1.2); labs{end+1}='clean';    end
+if any(m1f), h(end+1)=plot(tg1(m1f), x1_fil(m1f), 'Color', filtCol,'LineWidth',1.6);       labs{end+1}='filtered'; end
+grid on; ylabel('x [m]'); title('Vehicle 1'); if ~isempty(h), leg = legend(h,labs,'Location','best'); set(leg,'Color','w','EdgeColor',[0.3 0.3 0.3],'TextColor','k');end
+
+% Y(t)
+nexttile; hold on; h=[]; labs={};
+if any(m1r), h(end+1)=plot(tg1(m1r), y1_raw(m1r), 'Color', rawCol);          labs{end+1}='raw';      end
+if any(m1c), h(end+1)=plot(tg1(m1c), y1_cln(m1c), '--','Color', cleanCol,'LineWidth',1.2); labs{end+1}='clean';    end
+if any(m1f), h(end+1)=plot(tg1(m1f), y1_fil(m1f), 'Color', filtCol,'LineWidth',1.6);       labs{end+1}='filtered'; end
+grid on; xlabel('Time [s]'); ylabel('y [m]');
+exportFig('v1_raw_clean_filtered_time.png');
+
+%% Vehicle 2 
+figure('Name','Vehicle 2 — raw/clean/filtered (x,y)'); tiledlayout(2,1,'Padding','compact');
+
+% X(t)
+nexttile; hold on; h=[]; labs={};
+m2r = isfinite(x2_raw) & isfinite(y2_raw);
+m2c = isfinite(x2_cln) & isfinite(y2_cln);
+m2f = isfinite(x2_fil) & isfinite(y2_fil);
+if any(m2r), h(end+1)=plot(tg2(m2r), x2_raw(m2r), 'Color', rawCol);          labs{end+1}='raw';      end
+if any(m2c), h(end+1)=plot(tg2(m2c), x2_cln(m2c), '--','Color', cleanCol,'LineWidth',1.2); labs{end+1}='clean';    end
+if any(m2f), h(end+1)=plot(tg2(m2f), x2_fil(m2f), 'Color', filtCol,'LineWidth',1.6);       labs{end+1}='filtered'; end
+grid on; ylabel('x [m]'); title('Vehicle 2'); if ~isempty(h), leg = legend(h,labs,'Location','best');set(leg,'Color','w','EdgeColor',[0.3 0.3 0.3],'TextColor','k'); end
+
+% Y(t)
+nexttile; hold on; h=[]; labs={};
+if any(m2r), h(end+1)=plot(tg2(m2r), y2_raw(m2r), 'Color', rawCol);          labs{end+1}='raw';      end
+if any(m2c), h(end+1)=plot(tg2(m2c), y2_cln(m2c), '--','Color', cleanCol,'LineWidth',1.2); labs{end+1}='clean';    end
+if any(m2f), h(end+1)=plot(tg2(m2f), y2_fil(m2f), 'Color', filtCol,'LineWidth',1.6);       labs{end+1}='filtered'; end
+grid on; xlabel('Time [s]'); ylabel('y [m]');
+exportFig('v2_raw_clean_filtered_time.png');
+
+%% Vehicle 1 
+figure('Name','Vehicle 1 — XY raw/clean/filtered'); hold on; h=[]; labs={};
+idr = isfinite(x1)  & isfinite(y1);
+idc = ~isempty(t1c) & isfinite(x1c) & isfinite(y1c);
+idf = isfinite(x1h) & isfinite(y1h);
+if any(idr), h(end+1)=plot(x1(idr) , y1(idr) , 'Color', rawCol);                         labs{end+1}='raw';      end
+if any(idc), h(end+1)=plot(x1c(idc), y1c(idc), '--','Color', cleanCol,'LineWidth',1.2);  labs{end+1}='clean';    end
+if any(idf), h(end+1)=plot(x1h(idf), y1h(idf), 'Color', filtCol,'LineWidth',1.8);        labs{end+1}='filtered'; end
+axis equal; grid on; xlabel('x [m]'); ylabel('y [m]');
+if ~isempty(h), leg = legend(h,labs,'Location','best'); set(leg,'Color','w','EdgeColor',[0.3 0.3 0.3],'TextColor','k');end
+exportFig('v1_raw_clean_filtered_xy.png');
+
+%% Vehicle 2 
+figure('Name','Vehicle 2 — XY raw/clean/filtered'); hold on; h=[]; labs={};
+idr = isfinite(x2)  & isfinite(y2);
+idc = ~isempty(t2c) & isfinite(x2c) & isfinite(y2c);
+idf = isfinite(x2h) & isfinite(y2h);
+if any(idr), h(end+1)=plot(x2(idr) , y2(idr) , 'Color', rawCol);                         labs{end+1}='raw';      end
+if any(idc), h(end+1)=plot(x2c(idc), y2c(idc), '--','Color', cleanCol,'LineWidth',1.2);  labs{end+1}='clean';    end
+if any(idf), h(end+1)=plot(x2h(idf), y2h(idf), 'Color', filtCol,'LineWidth',1.8);        labs{end+1}='filtered'; end
+axis equal; grid on; xlabel('x [m]'); ylabel('y [m]');
+if ~isempty(h), leg = legend(h,labs,'Location','best');set(leg,'Color','w','EdgeColor',[0.3 0.3 0.3],'TextColor','k'); end
+exportFig('v2_raw_clean_filtered_xy.png');
