@@ -13,29 +13,27 @@
 % Notes::
 % - SI units are used.
 %
+cuztomized_wp = [5.0, 7 ;...
+                 6.0 , 18 ;...
+                 13 ,  9.0;...
+                 17 ,  18 ;...
+                 23, 3.5];
+cuztomized_wp = cuztomized_wp*2;
+waypoints = waypoints_generator(5, [0 52], [0 41]);
+optimized_waypoints = two_opt_nn_multi_optimisation(cuztomized_wp);
 
-waypoints = waypoints_generator(10, [-500, 500]);
-optimized_waypoints = two_opt_nn_multi_optimisation(waypoints);
-
+load('obstacles_air_ground.mat')
+load('complexMap_air_ground.mat')
 %load('optimized_waypoints.mat');  % Load preset waypoints (optimized)
 
 % Get initial waypoint
 init_wp = optimized_waypoints(1, :);
 
 % Set radius for random starting position
-R = 200; 
-angle = rand() * 2 * pi;
-dist = rand() * R;
-
-% Random pose around initial waypoint
-random_pose = [ ...
-    init_wp(1) + dist * cos(angle), ...
-    init_wp(2) + dist * sin(angle), ...
-    randi([-180, 180], 1) ];
 
 % Assign to robot struct
-robot.X = random_pose(1,1);                  
-robot.Y = random_pose(1,2);                   
+robot.X = 2;                  
+robot.Y = 2;                   
 robot.Theta = 0;
 
 initial_state = [robot.X ; robot.Y; robot.Theta; 0; 0; 0];
