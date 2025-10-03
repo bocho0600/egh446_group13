@@ -1,6 +1,6 @@
 %% Clean + open model
-close_system('sl_groundvehicleDynamics', 0);
-
+%close_system('sl_groundvehicleDynamics', 0);
+close_system('sl_groundvehicleDynamics_test', 0);
 homedir = pwd;
 addpath(genpath(fullfile(homedir,'toolboxes')));
 
@@ -8,7 +8,8 @@ cd(fullfile('toolboxes','MRTB'));
 startMobileRoboticsSimulationToolbox;
 cd(homedir);
 
-open_system('sl_groundvehicleDynamics');
+%open_system('sl_groundvehicleDynamics');
+open_system('sl_groundvehicleDynamics_test');
 
 %% Run and save outputs
 simOut = sim('sl_groundvehicleDynamics','StopTime','500');   % adjust as needed

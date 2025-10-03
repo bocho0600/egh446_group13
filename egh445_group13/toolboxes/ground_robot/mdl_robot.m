@@ -19,11 +19,11 @@ cuztomized_wp = [5.0, 7 ;...
                  17 ,  18 ;...
                  23, 3.5];
 cuztomized_wp = cuztomized_wp*2;
-waypoints = waypoints_generator(5, [0 52], [0 41]);
-optimized_waypoints = two_opt_nn_multi_optimisation(cuztomized_wp);
+% waypoints = waypoints_generator(5, [0 52], [0 41]);
+%optimized_waypoints = two_opt_nn_multi_optimisation(cuztomized_wp);
+optimized_waypoints = cuztomized_wp;
+param; % Load sensors params, map and obstacle
 
-load('obstacles_air_ground.mat')
-load('complexMap_air_ground.mat')
 %load('optimized_waypoints.mat');  % Load preset waypoints (optimized)
 
 % Get initial waypoint
@@ -34,7 +34,7 @@ init_wp = optimized_waypoints(1, :);
 % Assign to robot struct
 robot.X = 2;                  
 robot.Y = 2;                   
-robot.Theta = 0;
+robot.Theta = 3.14;
 
 initial_state = [robot.X ; robot.Y; robot.Theta; 0; 0; 0];
 
